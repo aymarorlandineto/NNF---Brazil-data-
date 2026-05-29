@@ -11,14 +11,16 @@ library(patchwork)
 library(MASS)
 library(sjPlot)
 library(RColorBrewer)
-
+library(pbkrtest)
 
 conflicted::conflict_scout()
 conflicted::conflicts_prefer(dplyr::filter)
 conflicted::conflicts_prefer(dplyr::select)
 
 tema_padrao <- theme_bw() +
-  theme(    text = element_text(size = 14),  
+  theme(text = element_text(size = 14, color = "black"),
+        axis.text = element_text(color = "black"),
+        axis.title = element_text(color = "black"),  
     panel.background = element_rect(fill = "white"),
     panel.grid.major = element_blank(),
     panel.grid.minor = element_blank(),
@@ -104,137 +106,144 @@ sc_clim<-ggplot(dados_bacias, aes(x = climatch_hist, y = climatch_fut, color = o
 sc_clim
 
 
-#### modelos associados ao uso humano
-#### especies como replicas
 dados_bacias<-dados_bacias %>% distinct(validnames,.keep_all = T)
-# modelo global
-modelo_global<-glmer(cbind(n_bacias, 12 - n_bacias)~ 
-                       UsedforAquaculture+
-                       UsedasBait+
-                       Aquarium+ 
-                       GameFish+
-                       Importance +(1|order),
-                     family=binomial(link="logit"),
-                     data=dados_bacias,
-                     na.action = na.omit, control = glmerControl(optimizer="bobyqa"))
-summary(modelo_global)
+
+table(dados_bacias$order, dados_bacias$validnames)
+unique(dados_bacias$order)
+unique(dados_bacias$validnames)
+
+n_order<- dados_bacias %>%
+  group_by(order) %>%
+  summarise(qtd_validnames = n_distinct(validnames))
+print(n_order, n=23)
+
+dados_bacias$validnames<- as.factor(dados_bacias$validnames)
+dados_bacias <- dados_bacias %>%
+  mutate(length_s = as.numeric(scale(length)),
+    maxBio5_s = as.numeric(scale(maxBio5)),
+    minBio6_s = as.numeric(scale(minBio6)))
+
+dados_bacias<- dados_bacias %>%
+  rename(Aquaculture = UsedforAquaculture,
+         Bait = UsedasBait,
+         TL = length_s,
+         RP = RepGuild1,
+        MaxT = maxBio5_s,
+        MinT = minBio6_s)
+
+dados_bacias<-dados_bacias %>% mutate(n_native = case_when(
+  origin == "translocated" ~ sapply(strsplit(dados_bacias$native_range, ", "),length),
+  TRUE ~ 0  )) %>% relocate(origin,validnames,basin,native_range,n_bacias,n_native)
+
+dados_bacias <- dados_bacias %>% mutate(n_native = if_else(
+  origin == "translocated",  stringr::str_count(native_range, ",") + 1, 0))
+
+dados_bacias$n_possiveis <- 12 - dados_bacias$n_native
+
+##### Modelo Global (TODAS AS SP E DRIVERS)
+dados_modelo_global <- dados_bacias %>%
+  select(validnames, origin, n_bacias,n_possiveis,Aquaculture, 
+         Bait, Aquarium, GameFish, Importance,
+         TL, RP, MaxT, MinT, order) %>%
+  na.omit() %>%
+  droplevels()
+
+modelo_global<-glmer(cbind(n_bacias, n_possiveis - n_bacias) ~ 
+    Aquaculture + 
+    Bait +
+    Aquarium + 
+    GameFish +
+    Importance +TL+
+     RP + MaxT + MinT + (1|order),
+  family = binomial(link = "logit"),
+  data = dados_modelo_global,
+  na.action = na.omit)
+modelo_global
+anovax( modelo_global)# Bootstrap likelihood-ratio tests
+performance(modelo_global)
+isSingular(modelo_global)
 multicollinearity(modelo_global)
-r.squaredGLMM(modelo_global)
 dispersion_glmer(modelo_global)
-standardize_parameters(modelo_global)
+ 
+##### Drivers Separados
+dados_modelo1 <- dados_bacias %>%
+  select(validnames,origin, n_bacias,n_possiveis, Aquaculture, Bait, Aquarium, GameFish, Importance,
+         order) %>% na.omit() %>% droplevels()
 
 #### so para exoticos
-modelo_global_exo<-glmer(cbind(n_bacias, 12 - n_bacias)~ 
-                           UsedforAquaculture+
-                           UsedasBait+
+modelo_human_exo<-glmer(cbind(n_bacias, n_possiveis - n_bacias)~ 
+                           Aquaculture+
+                           Bait+
                            Aquarium+ 
                            GameFish+
                            Importance +(1|order),
                          family=binomial(link="logit"),
-                         data=dados_bacias %>%
+                         data=dados_modelo1 %>%
                            filter(origin=="exotic")%>%
                            droplevels(.),
-                         na.action = na.omit, control = glmerControl(optimizer="bobyqa"))
-summary(modelo_global_exo)
-multicollinearity(modelo_global_exo)
-r.squaredGLMM(modelo_global_exo)
-dispersion_glmer(modelo_global_exo)
-standardize_parameters(modelo_global_exo)
-
-m_exo_plot<-plot_model(modelo_global_exo, 
-                       terms = c("Importance","UsedforAquaculture", 
-                                 "UsedasBait", "Aquarium","GameFish"),
-                       colors = "#7F171F",    type = "std",     
-                       transform = NULL,     
-                       show.values = TRUE,   value.size=3,   
-                       value.offset = 0.2) + 
-  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
-  theme_minimal()+tema_padrao
-m_exo_plot
-
+                         na.action = na.omit)
+modelo_human_exo
+anovax(modelo_human_exo)
+performance(modelo_human_exo)
+isSingular(modelo_human_exo)
+multicollinearity(modelo_human_exo)
+dispersion_glmer(modelo_human_exo)
 
 ####### so para translocados
-modelo_global_trans<-glmer(cbind(n_bacias, 12 - n_bacias)~ 
-                             UsedforAquaculture+
-                             UsedasBait+
-                             Aquarium+ 
-                             GameFish+
-                             Importance +(1|order),
-                           family=binomial(link="logit"),
-                           data=dados_bacias %>%
-                             filter(origin=="translocated")%>%
-                             droplevels(.),
-                           na.action = na.omit, control = glmerControl(optimizer="bobyqa"))
-summary(modelo_global_trans)
-multicollinearity(modelo_global_trans)
-r.squaredGLMM(modelo_global_trans)
-dispersion_glmer(modelo_global_trans)
-standardize_parameters(modelo_global_trans)
-
-
-m_trans_plot<-plot_model(modelo_global_trans, 
-                         terms = c("Importance","UsedforAquaculture", 
-                                   "UsedasBait", "Aquarium","GameFish"),
-                         colors = "#81A9F0",    type = "std",     
-                         transform = NULL,     
-                         show.values = TRUE,   value.size=3,   
-                         value.offset = 0.2) + 
-  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
-  theme_minimal()+tema_padrao
-m_trans_plot
-
-human_plot<-m_exo_plot|m_trans_plot+ plot_layout(heights = c(1))
-human_plot
+modelo_human_tran<-glmer(cbind(n_bacias, n_possiveis - n_bacias)~ 
+                           Aquaculture+
+                           Aquarium+ 
+                           GameFish+
+                           Importance +(1|order),
+                         family=binomial(link="logit"),
+                         data=dados_modelo1 %>%
+                           filter(origin=="translocated")%>%
+                           droplevels(.),
+                         na.action = na.omit)
+modelo_human_tran
+anovax(modelo_human_tran)
+performance(modelo_human_tran)
+isSingular(modelo_human_tran)
+multicollinearity(modelo_human_tran)
+dispersion_glmer(modelo_human_tran)
 
 ### modelos associados a traços ecologicos
-dados_bacias <- dados_bacias %>%
-  mutate(
-    length_s = as.numeric(scale(length)),
-    maxBio5_s = as.numeric(scale(maxBio5)),
-    minBio6_s = as.numeric(scale(minBio6))
-  )
-# global
-modelo_global<-glmer(cbind(n_bacias, 12 - n_bacias)~ 
-                       length_s + RepGuild1+maxBio5_s  + 
-                       minBio6_s  +(1|order),
-                     family=binomial(link="logit"),
-                     data=dados_bacias,
-                     na.action = na.omit, control = glmerControl(optimizer="bobyqa"))
-summary(modelo_global)
-multicollinearity(modelo_global)
-r.squaredGLMM(modelo_global)
-standardize_parameters(modelo_global)
-dispersion_glmer(modelo_global)
+dados_modelo <- dados_bacias %>%
+  select(validnames,origin, n_bacias,n_possiveis, TL, RP, MaxT, MinT, order) %>%
+  na.omit() %>%
+  droplevels()
 
 ### só exoticos
-modelo_exo_glmm <- glmer(cbind(n_bacias, 12 - n_bacias)~ 
-                           length_s + RepGuild1+maxBio5_s  + 
-                           minBio6_s  +(1|order),
+modelo_exo_trat <- glmer(cbind(n_bacias, n_possiveis - n_bacias)~ 
+                           TL + RP+MaxT  + 
+                           MinT  +(1|order),
                          family=binomial(link="logit"),
-                         data=dados_bacias %>%
+                         data=dados_modelo %>%
                            filter(origin=="exotic")%>%
                            droplevels(.),
-                         na.action = na.omit, control = glmerControl(optimizer="bobyqa"))
-summary(modelo_exo_glmm) 
-dispersion_glmer(modelo_exo_glmm)
-r.squaredGLMM(modelo_exo_glmm)
-multicollinearity(modelo_exo_glmm)
-standardize_parameters(modelo_exo_glmm)
+                         na.action = na.omit)
+modelo_exo_trat
+anovax(modelo_exo_trat)
+performance(modelo_exo_trat)
+isSingular(modelo_exo_trat)
+multicollinearity(modelo_exo_trat)
+dispersion_glmer(modelo_exo_trat)
 
 ### so translocados
-modelo_trans_glmm <-  glmer(cbind(n_bacias, 12 - n_bacias) ~ 
-                              length_s + RepGuild1+maxBio5_s  + 
-                              minBio6_s  + (1|order),
+modelo_trans_trat <-  glmer(cbind(n_bacias, n_possiveis - n_bacias) ~ 
+                              TL + RP+MaxT  + 
+                              MinT + (1|order),
                             family=binomial(link="logit"),
-                            data=dados_bacias %>%
+                            data=dados_modelo%>%
                               filter(origin=="translocated")%>%
                               droplevels(.),
-                            na.action = na.omit, control = glmerControl(optimizer = "bobyqa"))
-summary(modelo_trans_glmm) 
-r.squaredGLMM(modelo_trans_glmm)
-multicollinearity(modelo_trans_glmm)
-dispersion_glmer(modelo_trans_glmm)
-standardize_parameters(modelo_trans_glmm)
+                            na.action = na.omit)
+modelo_trans_trat
+anovax(modelo_exo_trat)
+performance(modelo_trans_trat)
+isSingular(modelo_trans_trat)
+multicollinearity(modelo_trans_trat)
+dispersion_glmer(modelo_trans_trat)
 
 # pareados (rep guild)
 emmeans_exo <- emmeans(modelo_exo_glmm, pairwise ~ 
@@ -254,29 +263,167 @@ emmeans_guild <- bind_rows(emmeans_exo, emmeans_trans)%>%
   mutate(fit = response * 12, lower = asymp.LCL * 12, upper = asymp.UCL * 12) 
 
 
-# graficos
-eco_exo_plot<-plot_model(modelo_exo_glmm, 
-                         terms = c("length_s","RepGuild1.L", "RepGuild1.Q", "maxBio5_s","minBio6_s"), 
-                         colors = "#7F171F", transform = NULL, type = "std",
-                         show.values = TRUE, value.size=3, value.offset = 0.2) + 
-  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
-  theme_minimal()+
-  tema_padrao 
-eco_exo_plot 
+# CI bootstrap e graficos
+library(parallel)
 
-eco_trans_plot<-plot_model(modelo_trans_glmm, 
-                           terms = c("length_s","RepGuild1.L", "RepGuild1.Q", "maxBio5_s","minBio6_s"), 
-                           colors = "#81A9F0", transform = NULL, type = "std", show.values = TRUE, value.size=3, 
-                           value.offset = 0.2) + geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
-  theme_minimal()+tema_padrao 
-eco_trans_plot
+cl <- makeCluster(detectCores() - 1)
 
-human_plot<-m_exo_plot|m_trans_plot+ plot_layout(heights = c(1))
-eco_plot <-eco_exo_plot|eco_trans_plot+ plot_layout(heights = c(1))
-plotfinal<-human_plot/eco_plot + 
-  plot_layout(guides = "collect") 
+boot_table <- function(model) {
+  
+  set.seed(123)
+  
+  boot_res <- bootMer(
+    model,
+    FUN = fixef,
+    nsim = 1000,
+    type = "parametric",
+    parallel = "snow",
+    cl = cl
+  )
+  
+  boot_ci <- apply(
+    boot_res$t, 2,
+    quantile,
+    probs = c(0.025, 0.975),
+    na.rm = TRUE
+  )
+  
+  boot_ci <- as.data.frame(t(boot_ci))
+  colnames(boot_ci) <- c("lwr", "upr")
+  
+  coefs <- data.frame(
+    term = names(fixef(model)),
+    estimate = as.numeric(fixef(model))
+  )
+  
+  coefs$lwr <- boot_ci$lwr
+  coefs$upr <- boot_ci$upr
+  
+  coefs <- subset(coefs, term != "(Intercept)")
+  
+  return(coefs)
+}
+coefs_modelo_global  <- boot_table(modelo_global)
+coefs_human_exo  <- boot_table(modelo_human_exo)
+coefs_human_tran <- boot_table(modelo_human_tran)
+coefs_exo_trat   <- boot_table(modelo_exo_trat)
+coefs_trans_trat  <- boot_table(modelo_trans_trat)
+coefs_todos <- bind_rows(
+  global      = coefs_modelo_global,
+  human_exo   = coefs_human_exo,
+  human_tran  = coefs_human_tran,
+  exo_trat    = coefs_exo_trat,
+  trans_trat  = coefs_trans_trat,
+  .id = "modelo")
 
+coefs_todos$term <- factor(coefs_todos$term,
+  levels = rev(unique(coefs_todos$term)))
+
+coefs_todos$signif <- ifelse(coefs_todos$lwr > 0 | coefs_todos$upr < 0, "*","")
+
+coefs_todos <- coefs_todos %>%
+  dplyr::bind_rows(data.frame(modelo = "human_tran",
+      term = "Bait",estimate = NA,
+      lwr = NA,upr = NA,signif = ""))
+
+#writexl::write_xlsx(coefs_todos , "coefs_todos.xlsx")
+
+global_plot<-ggplot(coefs_todos %>% filter(modelo == "global"), aes(x = term,
+                               y = estimate)) +
+  geom_pointrange(aes(ymin = lwr, ymax = upr),size = 0.7) +
+  coord_flip() +
+  geom_text(aes(label = signif),
+    hjust = -1,
+    vjust = .05,
+    size = 5) +
+  geom_hline( yintercept = 0,linetype = "dashed",color="black") +
+  labs(x = NULL, y = "Standardized effect size") +#(logit scale, bootstrap 95% CI)
+  theme_minimal(base_size = 14)+
+  tema_padrao
+global_plot<- global_plot +
+  labs( title = "Global model",
+        subtitle = "R² = 49%, Observations = 152")
+
+exo_human_plot <- ggplot(coefs_todos %>% filter(modelo == "human_exo"),
+  aes(x = term, y = estimate)) + geom_pointrange(
+    aes(ymin = lwr, ymax = upr),
+    size = 0.7,
+    color = "#7F171F")+
+ coord_flip() +
+  geom_text(aes(label = signif),
+    hjust = -1,
+    vjust = .05,
+    size = 5) +
+  geom_hline( yintercept = 0,linetype = "dashed",color="black") +
+  labs(x = NULL, y = "Standardized effect size") +#(logit scale, bootstrap 95% CI)
+  theme_minimal(base_size = 14)+
+  tema_padrao
+exo_human_plot<- exo_human_plot +
+  labs( title = "Exotic - Human use",
+        subtitle = "R² = 55%, Observations = 117")
+
+exo_eco_plot <- ggplot(coefs_todos %>% filter(modelo == "exo_trat"),
+                         aes(x = term, y = estimate)) + geom_pointrange(
+                           aes(ymin = lwr, ymax = upr),
+                           size = 0.7,
+                           color = "#7F171F")+
+  coord_flip() +
+  geom_text(aes(label = signif),
+            hjust = -1,
+            vjust = .05,
+            size = 5) +
+  geom_hline( yintercept = 0,linetype = "dashed",color="black") +
+  labs(x = NULL, y = "Standardized effect size") +#(logit scale, bootstrap 95% CI)
+  theme_minimal(base_size = 14)+
+  tema_padrao
+exo_eco_plot <- exo_eco_plot +
+  labs( title = "Exotic - Ecological",
+        subtitle = "R² = 56%, Observations = 64")
+
+
+tran_human_plot <- ggplot(coefs_todos %>% filter(modelo == "human_tran"),
+aes(x = term, y = estimate)) + geom_pointrange(aes(ymin = lwr, ymax = upr),
+size = 0.7,color = "#81A9F0")+
+  coord_flip() +
+  geom_text(aes(label = signif),
+            hjust = -1,
+            vjust = .05,
+            size = 5) +
+  geom_hline( yintercept = 0,linetype = "dashed",color="black") +
+  labs(x = NULL, y = "Standardized effect size") +#(logit scale, bootstrap 95% CI)
+  theme_minimal(base_size = 14)+
+  tema_padrao
+tran_human_plot<- tran_human_plot +
+  labs( title = "Translocated - Human use",
+        subtitle = "R² = 22%, Observations = 234") 
+
+tran_eco_plot <- ggplot(coefs_todos %>% filter(modelo == "trans_trat"),
+                       aes(x = term, y = estimate)) + geom_pointrange(
+                         aes(ymin = lwr, ymax = upr),
+                         size = 0.7,
+                         color = "#81A9F0")+
+  coord_flip() +
+  geom_text(aes(label = signif),
+            hjust = -1,
+            vjust = .05,
+            size = 5) +
+  geom_hline( yintercept = 0,linetype = "dashed",color="black") +
+  labs(x = NULL, y = "Standardized effect size") +#(logit scale, bootstrap 95% CI)
+  theme_minimal(base_size = 14)+
+  tema_padrao
+tran_eco_plot <- tran_eco_plot +
+  labs( title = "Translocated - Ecological",
+    subtitle = "R² = 23%, Observations = 88") 
+
+exo_plot<-exo_human_plot|exo_eco_plot+ plot_layout(heights = c(1))
+tran_plot <-tran_human_plot|tran_eco_plot+ plot_layout(heights = c(1))
+plotfinal <- (global_plot | (exo_plot / tran_plot)) +
+  plot_layout(widths = c(1, 2))
+plotfinal<- plotfinal+ plot_annotation(tag_levels = 'A') & 
+  theme(plot.tag.position = c(0, 1),
+        plot.tag = element_text(size = 12, hjust = 0, vjust = 0))
 plotfinal
+ggsave("final_plot_new5.pdf", plot =plotfinal , dpi = 600, width = 11, height = 7)
 
 ### Mapas
 #shapefile bacias hidro ibge
