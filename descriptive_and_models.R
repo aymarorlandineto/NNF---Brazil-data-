@@ -27,11 +27,262 @@ tema_padrao <- theme_bw() +
     panel.border = element_rect(color = "black", fill = NA),
     legend.position = "right")
 
-## Dados
+### Mapas
+library(tidyverse)
+library(sf)
+library(patchwork)
+library(ggplot2)
+library(broom.mixed)
+shapefile_dir_ibge <- "C:/Aymar Backup/aymar/Global dataset/SNIRH_RegioesHidrograficas_2020"
+shapefile_path_ibge <- file.path(shapefile_dir_ibge, "SNIRH_RegioesHidrograficas_2020.shp")
+bacias_br<- st_read(shapefile_path_ibge)
+bacias_br<-sf::st_set_crs(bacias_br,4326)
+bacias_br<-st_transform(bacias_br,4326)
+bacias_sf<-st_make_valid(bacias_br)
 
+## Dados
 file_path <- "C:/Aymar Backup/aymar/Aymar/Pós/Artigo_Inv_Func/data_available.xlsx"
 dados_bacias <- read_excel(file_path)
 str(dados_bacias)
+dados_bacias
+dados_bacias$RepGuild1<-as.factor(dados_bacias$repGuild1)
+dados_bacias$RepGuild1<-factor(dados_bacias$RepGuild1, order = TRUE, 
+                               levels = c("nonguarders", "guarders", "bearers"))
+
+dados_bacias$order<-as.factor(dados_bacias$order)
+dados_bacias$order <- relevel(dados_bacias$order, ref = "Characiformes")
+
+dados_bacias$origin<-as.factor(dados_bacias$origin)
+
+names(dados_bacias)
+glimpse(dados_bacias)
+
+#shapefile bacias hidro ibge
+shapefile_dir_ibge <- "C:/Aymar Backup/aymar/Global dataset/SNIRH_RegioesHidrograficas_2020"
+shapefile_path_ibge <- file.path(shapefile_dir_ibge, "SNIRH_RegioesHidrograficas_2020.shp")
+bacias_br<- st_read(shapefile_path_ibge)
+bacias_br<-sf::st_set_crs(bacias_br,4326)
+bacias_br<-st_transform(bacias_br,4326)
+bacias_br<-st_make_valid(bacias_br)
+bacias_br$rhi_nm
+bacia_names_translation <- c(
+  "AMAZÔNICA" = "Amazon",
+  "TOCANTINS-ARAGUAIA" = "Tocantins-Araguaia",
+  "ATLÂNTICO NORDESTE OCIDENTAL" = "Western Northeast Atlantic",
+  "ATLÂNTICO NORDESTE ORIENTAL" = "Eastern Northeast Atlantic",
+  "ATLÂNTICO LESTE" = "Eastern Atlantic",
+  "ATLÂNTICO SUDESTE" = "Southeastern Atlantic",
+  "ATLÂNTICO SUL" = "Southern Atlantic",
+  "PARAGUAI" = "Paraguay",
+  "PARANÁ" = "Paraná",
+  "URUGUAI" = "Uruguay",
+  "PARNAÍBA" = "Parnaíba",
+  "SÃO FRANCISCO" = "São Francisco")
+bacias_br <- bacias_br %>%
+  mutate(rhi_nm = recode(rhi_nm, !!!bacia_names_translation))
+colnames(bacias_br)[4]<-"Basin"
+bacias_br
+
+### Reinos/Bacias doadoras
+library(tidyr)
+library(stringr)
+conflicted::conflict_scout()
+
+dados_bacias$native_range <- gsub(",\\s*$", "", dados_bacias$native_range)
+#dados_bacias <- dados_bacias[!grepl(",", dados_bacias$native_range), ]
+levels(as.factor(dados_bacias$native_range))
+dados_bacias %>%
+  filter(str_detect(native_range, ","))
+
+bacias_doadoras <- dados_bacias %>%
+  filter(origin == "translocated",
+         native_range != "unknown") %>%
+  mutate(native_range = str_trim(native_range)) %>%
+  separate_rows(native_range, sep = ",\\s*") %>%
+  filter(native_range != "") %>%
+  group_by(basin, validnames) %>%
+  mutate(peso = 1 / n()) %>%
+  ungroup() %>%
+  group_by(basin, native_range) %>%
+  summarise(Contribuicao = sum(peso), .groups = "drop") %>%
+  group_by(basin) %>%
+  mutate(Percentual = 100 * Contribuicao / sum(Contribuicao)) %>%
+  select(-Contribuicao) %>%
+  ungroup()
+
+bacias_doadoras_geral <- dados_bacias %>%
+  filter(origin == "translocated",
+         native_range != "unknown") %>%
+  mutate(native_range = str_trim(native_range)) %>%
+  separate_rows(native_range, sep = ",\\s*") %>%
+  filter(native_range != "") %>%
+  group_by(validnames) %>%
+  mutate(peso = 1 / n()) %>%
+  ungroup() %>%
+  group_by(native_range) %>%
+  summarise(Contribuicao = sum(peso), .groups = "drop") %>%
+  mutate(Percentual = 100 * Contribuicao / sum(Contribuicao)) %>%
+  select(-Contribuicao)
+
+
+## o mesmo para exoticas
+bacias_exoticas <- dados_bacias %>%
+  filter(origin == "exotic" & native_range != "unknown") %>%
+  mutate(native_range = str_trim(native_range)) %>%
+  separate_rows(native_range, sep = ",\\s*") %>%
+  filter(native_range != "") %>%
+  group_by(basin, validnames) %>%
+  mutate(peso = 1 / n()) %>%
+  ungroup() %>%
+  group_by(basin, native_range) %>%
+  summarise(Contribuicao = sum(peso), .groups = "drop") %>%
+  group_by(basin) %>%
+  mutate(Percentual = (Contribuicao / sum(Contribuicao)) * 100) %>%
+  select(-Contribuicao) %>%
+  ungroup()
+bacias_exoticas
+
+bacias_exoticas_geral <- dados_bacias %>%
+  filter(origin == "exotic" & native_range != "unknown") %>%
+  mutate(native_range = str_trim(native_range)) %>%
+  separate_rows(native_range, sep = ",\\s*") %>%
+  filter(native_range != "") %>%
+  group_by(basin, validnames) %>%
+  mutate(peso = 1 / n()) %>%
+  ungroup() %>%
+  group_by(native_range) %>%
+  summarise(Contribuicao = sum(peso), .groups = "drop") %>%
+  mutate(Percentual = (Contribuicao / sum(Contribuicao)) * 100) %>%
+  select(-Contribuicao) %>%
+  ungroup()
+bacias_exoticas_geral
+
+colnames(bacias_exoticas)[2]<-"Origin_realm"
+colnames(bacias_doadoras)[2]<-"Origin_basin"
+colnames(bacias_exoticas)[1]<-"Recipient_basin"
+colnames(bacias_doadoras)[1]<-"Recipient_basin"
+
+print(bacias_exoticas, n=50)
+print(bacias_doadoras, n=50)
+
+################
+library(ggalluvial)
+windows()
+bacias_exoticas_f <- bacias_exoticas %>%
+  mutate(Basin = factor(as.character(Recipient_basin),
+levels = sort(unique(as.character(Recipient_basin)))),
+    Origin_realm = factor(as.character(Origin_realm),
+levels = sort(unique(as.character(Origin_realm)))))
+
+bacias_doadoras_f <- bacias_doadoras %>%
+  mutate(Basin = factor(as.character(Recipient_basin),
+levels = sort(unique(as.character(Recipient_basin)))),
+    Origin_basin = factor(as.character(Origin_basin),
+levels = sort(unique(as.character(Origin_basin)))))
+bacias_doadoras_f <- bacias_doadoras %>%
+  mutate( Basin = factor(recode(as.character(Recipient_basin),
+             "Western Northeast Atlantic" = "WNA",
+             "Eastern Northeast Atlantic" = "ENA")),
+    Origin_basin = factor(recode(as.character(Origin_basin),
+             "Western Northeast Atlantic" = "WNA",
+             "Eastern Northeast Atlantic" = "ENA")))
+
+############################
+#alturas 
+############################
+
+ref_alturas <- full_join(bacias_exoticas_f %>%
+    group_by(Basin) %>%
+      summarise(total_exo = sum(Percentual, na.rm = TRUE),
+        .groups = "drop"),
+  bacias_doadoras_f %>%
+    group_by(Basin) %>%
+    summarise(total_doa = sum(Percentual, na.rm = TRUE),
+      .groups = "drop"),
+  by = "Basin") %>%
+  mutate(total_ref = pmax(total_exo, total_doa, na.rm = TRUE)) %>%
+  select(Basin, total_ref)
+
+############################
+# normalização   
+############################
+bacias_exoticas_f2 <- bacias_exoticas_f %>%
+  filter(Percentual >= 10) %>%
+  left_join(ref_alturas, by = "Basin") %>%
+  group_by(Basin) %>%
+  mutate(
+    Percentual_pad = Percentual / sum(Percentual) * total_ref
+  ) %>%
+  ungroup()
+
+bacias_doadoras_f2 <- bacias_doadoras_f %>%
+  filter(Percentual >= 10) %>%
+  left_join(ref_alturas, by = "Basin") %>%
+  group_by(Basin) %>%
+  mutate( Percentual_pad = Percentual / sum(Percentual) * total_ref) %>%
+  ungroup()
+
+cores_realms <- c("Neotropic" = "#8DD3C7",    
+  "Palearctic" = "#B3DE69",   
+  "Nearctic" = "#FB8072",    
+  "Afrotropic" = "#FDB462",   
+  "Indo-Malay" = "#00316E")
+
+cores_bacias <- c("Amazon" = "#6A3D9A",      
+  "Eastern Atlantic" = "#1F78B4", 
+  "Paraguay" = "#33A02C",     
+  "Paraná" = "#E31A1C",       
+  "Parnaíba" = "#A6CEE3",     
+  "Southeastern Atlantic" = "#FFDF00", 
+  "São Francisco" = "#B2AF8A",  
+  "Tocantins-Araguaia" = "#E78AC3",  
+  "Uruguay" = "#666666",      
+  "WNA" = "#CAB2D6", 
+  "ENA" = "#FF7F00",  
+  "Southern Atlantic" = "#B15928" )
+
+cores_total <- c(cores_realms, cores_bacias)
+
+p1 <- ggplot( bacias_exoticas_f2,
+  aes(  axis1 = Origin_realm,
+    axis2 = Basin,  y = Percentual_pad)) +
+  geom_alluvium(aes(fill = Origin_realm), alpha = 0.5) +
+  geom_stratum(width = 0.25) +
+  geom_text(  stat = "stratum",
+    aes(label = after_stat(stratum)),
+    size = 3.5) +
+  scale_fill_manual(values = cores_realms) +
+  scale_x_discrete(    limits = c("Origin_realm", "Basin"),
+    expand = c(0, 0.10) ) +
+  theme_void() +
+  labs(title = "Influx to basins") +
+  theme(legend.position = "left",text = element_text(size = 18))
+
+
+p2 <- ggplot( bacias_doadoras_f2,
+  aes(axis1 = Basin,
+    axis2 = Origin_basin,
+    y = Percentual_pad)) +
+  geom_alluvium(aes(fill = Origin_basin), alpha = 0.5) +
+  geom_stratum(width = 0.25) +
+  geom_text(stat = "stratum",
+    data = ~ subset(.x, Origin_basin != "Eastern Atlantic"),
+    aes(label = after_stat(stratum)),
+    size = 3.5 ) +
+  scale_fill_manual(values = cores_bacias) +
+  scale_x_discrete(limits = c("Basin", "Origin_basin"),
+    expand = c(0, 0.10)) +
+  theme_void() +
+  labs(title = "Outflux from basins") +
+  theme(legend.position = "right",text = element_text(size = 18))+
+  theme(legend.position = "right",
+    text = element_text(size = 18),
+    plot.margin = margin(5.5, 60, 5.5, 0))
+
+p3 <- (p1 | p2) 
+p3
+
+#########
 
 # explorando
 # riqueza e distribuicao
@@ -40,6 +291,25 @@ riqueza_bacias <- dados_bacias %>%
   summarise(riqueza = n_distinct(validnames)) %>%
   ungroup()
 print(riqueza_bacias,n=100)
+
+bacias_sf_trans <-  bacias_br %>%
+  left_join(riqueza_bacias, by = c("Basin"="basin"))
+
+paleta_bacias <- RColorBrewer::brewer.pal(12, "Set3")
+
+mapa <- ggplot(bacias_sf_trans) +
+  geom_sf(aes(fill = Basin), color = "black", size = 0.2) +  # Contorno preto fino
+  geom_sf_text(aes(label = riqueza), size = 3, color = "black") +  # Texto com riqueza
+  scale_fill_manual(values = brewer.pal(12, "Set3")) +  # Paleta Set3
+  facet_wrap(~origin) +  # Facet por origem
+  labs(fill = "Basin") +   theme_bw()+
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.border = element_rect(color = "black", fill = NA),  # Borda preta sem fundo
+        legend.position = "bottom",
+        legend.direction = "horizontal") +
+  guides(fill = guide_legend(nrow = 2, override.aes = list(size = 3)))  # Ajuste da lege
+mapa
 
 unique(dados_bacias$validnames)
 
@@ -66,8 +336,7 @@ top_species <- n_bacias %>%
 print(top_species,n=25)
 
 # juntado info para os modelos
-dados_bacias <- left_join(dados_bacias, 
-                          n_bacias, by = c("validnames","origin"))
+dados_bacias <- left_join(dados_bacias, n_bacias, by = c("validnames","origin"))
 
 dados_bacias$RepGuild1<-as.factor(dados_bacias$repGuild1)
 dados_bacias$RepGuild1<-factor(dados_bacias$RepGuild1, order = TRUE, 
@@ -131,9 +400,8 @@ dados_bacias<- dados_bacias %>%
         MaxT = maxBio5_s,
         MinT = minBio6_s)
 
-dados_bacias<-dados_bacias %>% mutate(n_native = case_when(
-  origin == "translocated" ~ sapply(strsplit(dados_bacias$native_range, ", "),length),
-  TRUE ~ 0  )) %>% relocate(origin,validnames,basin,native_range,n_bacias,n_native)
+dados_bacias<-dados_bacias %>% mutate(n_native = case_when( origin == "translocated" ~ sapply(strsplit(dados_bacias$native_range, ", "),length),
+  TRUE ~ 0)) %>% relocate(origin,validnames,basin,native_range,n_bacias,n_native)
 
 dados_bacias <- dados_bacias %>% mutate(n_native = if_else(
   origin == "translocated",  stringr::str_count(native_range, ",") + 1, 0))
@@ -161,10 +429,21 @@ modelo_global<-glmer(cbind(n_bacias, n_possiveis - n_bacias) ~
 modelo_global
 anovax( modelo_global)# Bootstrap likelihood-ratio tests
 performance(modelo_global)
+parameters(modelo_global)
 isSingular(modelo_global)
 multicollinearity(modelo_global)
+standardize_parameters(modelo_global)
 dispersion_glmer(modelo_global)
  
+#grafico CI WALD
+#global_plot<-plot_model(modelo_global, 
+#                        colors = "black", transform = NULL, type = "std2",test = "LRT",
+#                        show.values = TRUE, value.size=3, value.offset = 0.2) + 
+#  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
+#  theme_minimal()+
+#  tema_padrao 
+
+
 ##### Drivers Separados
 dados_modelo1 <- dados_bacias %>%
   select(validnames,origin, n_bacias,n_possiveis, Aquaculture, Bait, Aquarium, GameFish, Importance,
@@ -183,10 +462,12 @@ modelo_human_exo<-glmer(cbind(n_bacias, n_possiveis - n_bacias)~
                            droplevels(.),
                          na.action = na.omit)
 modelo_human_exo
-anovax(modelo_human_exo)
+pbkrtest::anovax(modelo_human_exo)
 performance(modelo_human_exo)
+parameters(modelo_human_exo)
 isSingular(modelo_human_exo)
 multicollinearity(modelo_human_exo)
+standardize_parameters(modelo_human_exo)
 dispersion_glmer(modelo_human_exo)
 
 ####### so para translocados
@@ -201,10 +482,12 @@ modelo_human_tran<-glmer(cbind(n_bacias, n_possiveis - n_bacias)~
                            droplevels(.),
                          na.action = na.omit)
 modelo_human_tran
-anovax(modelo_human_tran)
+pbkrtest::anovax(modelo_human_tran)
 performance(modelo_human_tran)
+parameters(modelo_human_tran)
 isSingular(modelo_human_tran)
 multicollinearity(modelo_human_tran)
+standardize_parameters(modelo_human_tran)
 dispersion_glmer(modelo_human_tran)
 
 ### modelos associados a traços ecologicos
@@ -223,10 +506,13 @@ modelo_exo_trat <- glmer(cbind(n_bacias, n_possiveis - n_bacias)~
                            droplevels(.),
                          na.action = na.omit)
 modelo_exo_trat
-anovax(modelo_exo_trat)
+summary(modelo_exo_trat)
+pbkrtest::anovax(modelo_exo_trat)
 performance(modelo_exo_trat)
+parameters(modelo_exo_trat)
 isSingular(modelo_exo_trat)
 multicollinearity(modelo_exo_trat)
+standardize_parameters(modelo_exo_trat)
 dispersion_glmer(modelo_exo_trat)
 
 ### so translocados
@@ -241,29 +527,31 @@ modelo_trans_trat <-  glmer(cbind(n_bacias, n_possiveis - n_bacias) ~
 modelo_trans_trat
 anovax(modelo_exo_trat)
 performance(modelo_trans_trat)
+parameters(modelo_trans_trat)
 isSingular(modelo_trans_trat)
 multicollinearity(modelo_trans_trat)
+standardize_parameters(modelo_trans_trat)
 dispersion_glmer(modelo_trans_trat)
 
 # pareados (rep guild)
-emmeans_exo <- emmeans(modelo_exo_glmm, pairwise ~ 
-                         RepGuild1, type="response", 
+emmeans_exo <- emmeans(modelo_exo_trat, pairwise ~ 
+                         RP, type="response", 
                        adjust="none")$emmeans %>% 
   multcomp::cld(adjust = "none", Letters = letters) %>% 
   as.data.frame() %>% 
   mutate(Origin = "Exotic") 
 colnames(emmeans_exo)[2] <- "response" 
-emmeans_trans <- emmeans(modelo_trans_glmm, pairwise ~ RepGuild1,
+emmeans_trans <- emmeans(modelo_trans_trat, pairwise ~ RP,
                          type="response", adjust="none")$emmeans %>% 
   multcomp::cld(adjust = "none", Letters = letters) %>% 
   as.data.frame() %>% 
   mutate(Origin = "Translocated") 
 colnames(emmeans_trans)[2] <- "response" 
+
 emmeans_guild <- bind_rows(emmeans_exo, emmeans_trans)%>% 
   mutate(fit = response * 12, lower = asymp.LCL * 12, upper = asymp.UCL * 12) 
 
-
-# CI bootstrap e graficos
+# graficos
 library(parallel)
 
 cl <- makeCluster(detectCores() - 1)
@@ -425,128 +713,4 @@ plotfinal<- plotfinal+ plot_annotation(tag_levels = 'A') &
 plotfinal
 ggsave("final_plot_new5.pdf", plot =plotfinal , dpi = 600, width = 11, height = 7)
 
-### Mapas
-#shapefile bacias hidro ibge
-shapefile_dir_ibge <- "C:/Aymar Backup/aymar/Global dataset/SNIRH_RegioesHidrograficas_2020"
-shapefile_path_ibge <- file.path(shapefile_dir_ibge, "SNIRH_RegioesHidrograficas_2020.shp")
-bacias_br<- st_read(shapefile_path_ibge)
-bacias_br<-sf::st_set_crs(bacias_br,4326)
-bacias_br<-st_transform(bacias_br,4326)
-bacias_br<-st_make_valid(bacias_br)
-bacias_br$rhi_nm
-bacia_names_translation <- c(
-  "AMAZÔNICA" = "Amazon",
-  "TOCANTINS-ARAGUAIA" = "Tocantins-Araguaia",
-  "ATLÂNTICO NORDESTE OCIDENTAL" = "Western Northeast Atlantic",
-  "ATLÂNTICO NORDESTE ORIENTAL" = "Eastern Northeast Atlantic",
-  "ATLÂNTICO LESTE" = "Eastern Atlantic",
-  "ATLÂNTICO SUDESTE" = "Southeastern Atlantic",
-  "ATLÂNTICO SUL" = "Southern Atlantic",
-  "PARAGUAI" = "Paraguay",
-  "PARANÁ" = "Paraná",
-  "URUGUAI" = "Uruguay",
-  "PARNAÍBA" = "Parnaíba",
-  "SÃO FRANCISCO" = "São Francisco")
-bacias_br <- bacias_br %>%
-  mutate(rhi_nm = recode(rhi_nm, !!!bacia_names_translation))
-colnames(bacias_br)[4]<-"Basin"
-bacias_br
-
-bacias_sf_trans <-  bacias_br %>%
-  left_join(riqueza_bacias, by = c("Basin"="basin"))
-
-paleta_bacias <- RColorBrewer::brewer.pal(12, "Set3")
-
-mapa <- ggplot(bacias_sf_trans) +
-  geom_sf(aes(fill = Basin), color = "black", size = 0.2) +  # Contorno preto fino
-  geom_sf_text(aes(label = riqueza), size = 3, color = "black") +  # Texto com riqueza
-  scale_fill_manual(values = brewer.pal(12, "Set3")) +  # Paleta Set3
-  facet_wrap(~origin) +  # Facet por origem
-  labs(fill = "Basin") +   theme_bw()+
-  theme(panel.grid.minor = element_blank(),
-        panel.grid.major = element_blank(),
-        panel.border = element_rect(color = "black", fill = NA),  # Borda preta sem fundo
-        legend.position = "bottom",
-        legend.direction = "horizontal") +
-  guides(fill = guide_legend(nrow = 2, override.aes = list(size = 3)))  # Ajuste da lege
-mapa
-
-### Reinos/Bacias doadoras
-
-dados_bacias$native_range <- gsub(",\\s*$", "", dados_bacias$native_range)
-dados_bacias <- dados_bacias[!grepl(",", dados_bacias$native_range), ]
-levels(as.factor(dados_bacias$native_range))
-
-
-bacias_doadoras <- dados_bacias %>%
-  filter(origin == "translocated" & native_range != "unknown") %>%
-  mutate(native_range = str_trim(native_range)) %>%
-  separate_rows(native_range, sep = ",\\s*") %>%
-  filter(native_range != "") %>%
-  group_by(basin, validnames) %>%
-  mutate(peso = 1 / n()) %>%
-  ungroup() %>%
-  group_by(basin, native_range) %>%
-  summarise(Contribuicao = sum(peso), .groups = "drop") %>%
-  group_by(basin) %>%
-  mutate(Percentual = (Contribuicao / sum(Contribuicao)) * 100) %>% 
-  select(-Contribuicao) %>%
-  ungroup()
-bacias_doadoras
-
-bacias_doadoras_geral <- dados_bacias %>%
-  filter(origin == "translocated" & native_range != "unknown") %>%
-  mutate(native_range = str_trim(native_range)) %>%
-  separate_rows(native_range, sep = ",\\s*") %>%
-  filter(native_range != "") %>%
-  group_by(basin, validnames) %>%
-  mutate(peso = 1 / n()) %>%
-  ungroup() %>%
-  group_by(native_range) %>%
-  summarise(Contribuicao = sum(peso), .groups = "drop") %>%
-  mutate(Percentual = (Contribuicao / sum(Contribuicao)) * 100) %>%
-  select(-Contribuicao) %>%
-  ungroup()
-bacias_doadoras_geral
-
-
-## o mesmo para exoticas
-bacias_exoticas <- dados_bacias %>%
-  filter(origin == "exotic" & native_range != "unknown") %>%
-  mutate(native_range = str_trim(native_range)) %>%
-  separate_rows(native_range, sep = ",\\s*") %>%
-  filter(native_range != "") %>%
-  group_by(basin, validnames) %>%
-  mutate(peso = 1 / n()) %>%
-  ungroup() %>%
-  group_by(basin, native_range) %>%
-  summarise(Contribuicao = sum(peso), .groups = "drop") %>%
-  group_by(basin) %>%
-  mutate(Percentual = (Contribuicao / sum(Contribuicao)) * 100) %>%
-  select(-Contribuicao) %>%
-  ungroup()
-bacias_exoticas
-
-bacias_exoticas_geral <- dados_bacias %>%
-  filter(origin == "exotic" & native_range != "unknown") %>%
-  mutate(native_range = str_trim(native_range)) %>%
-  separate_rows(native_range, sep = ",\\s*") %>%
-  filter(native_range != "") %>%
-  group_by(basin, validnames) %>%
-  mutate(peso = 1 / n()) %>%
-  ungroup() %>%
-  group_by(native_range) %>%
-  summarise(Contribuicao = sum(peso), .groups = "drop") %>%
-  mutate(Percentual = (Contribuicao / sum(Contribuicao)) * 100) %>%
-  select(-Contribuicao) %>%
-  ungroup()
-bacias_exoticas_geral
-
-colnames(bacias_exoticas)[2]<-"Origin_realm"
-colnames(bacias_doadoras)[2]<-"Origin_basin"
-colnames(bacias_exoticas)[1]<-"Recipient_basin"
-colnames(bacias_doadoras)[1]<-"Recipient_basin"
-
-print(bacias_exoticas, n=50)
-print(bacias_doadoras, n=50)
 
